@@ -32,10 +32,12 @@ cd expense-tracker-app
 ```
 
 ### 3. Environment Variables
-Create a file named `.env` in the root directory and add your Firebase configuration details:
+Create a file named **`.env`** in **both** the `frontend/` and `backend/` directories (or in the root and copy it to both). The frontend **must** have its own `.env` file for Expo to bundle the variables.
+
+Add your Firebase configuration:
 
 ```env
-# Frontend Firebase Configuration
+# Firebase Configuration (for frontend/ and backend/)
 EXPO_PUBLIC_FIREBASE_API_KEY=your_api_key
 EXPO_PUBLIC_FIREBASE_AUTH_DOMAIN=your_project_id.firebaseapp.com
 EXPO_PUBLIC_FIREBASE_PROJECT_ID=your_project_id
@@ -46,8 +48,9 @@ EXPO_PUBLIC_FIREBASE_APP_ID=your_app_id
 # Backend Configuration
 PORT=5000
 ```
-> [!NOTE]
-> You can find these values in your Firebase Project Settings under "General" > "Your apps" > "Web app".
+> [!IMPORTANT]
+> If you see an `invalid-api-key` error, ensure the `.env` file is located inside the `frontend/` folder where you run `npx expo start`.
+
 
 ### 4. Install Dependencies
 
