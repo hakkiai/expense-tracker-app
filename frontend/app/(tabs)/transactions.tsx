@@ -1,11 +1,22 @@
-import { useState, useEffect } from 'react';
-import { StyleSheet, View, Text, SectionList, ActivityIndicator, TouchableOpacity, Alert } from 'react-native';
+import { useState, useEffect, useMemo } from 'react';
+import {
+  StyleSheet, View, Text, SectionList, ActivityIndicator,
+  TouchableOpacity, Alert, TextInput,
+} from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { auth } from '@/config/firebaseConfig';
 import { subscribeToExpenses, deleteExpense, Expense } from '@/lib/firestore';
-import { COLORS, CATEGORY_COLORS } from '@/constants/theme';
 import { router } from 'expo-router';
+
+const CATEGORY_ICONS: Record<string, string> = {
+  Dining: 'restaurant-outline', Groceries: 'cart-outline', Shopping: 'bag-handle-outline',
+  Transit: 'train-outline', Entertainment: 'film-outline', 'Bills & Fees': 'document-text-outline',
+  Gifts: 'gift-outline', Beauty: 'color-palette-outline', Work: 'briefcase-outline',
+  Travel: 'airplane-outline', Income: 'arrow-up-circle-outline', 'Balance Correction': 'bar-chart-outline',
+  Salary: 'wallet-outline', Freelance: 'laptop-outline', Investment: 'trending-up-outline',
+  Business: 'storefront-outline', Gift: 'gift-outline', 'Other Income': 'cash-outline',
+};
 
 type Section = { title: string; data: Expense[] };
 
@@ -29,6 +40,7 @@ export default function TransactionsScreen() {
   const user = auth.currentUser;
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [loading, setLoading] = useState(true);
+  const [searchQuery, setSearchQuery] = useState('');
 
   useEffect(() => {
     if (!user) return;
@@ -36,14 +48,31 @@ export default function TransactionsScreen() {
     return unsub;
   }, []);
 
+  const filtered = useMemo(() => {
+    if (!searchQuery.trim()) return expenses;
+    const q = searchQuery.toLowerCase();
+    return expenses.filter(e =>
+      e.title.toLowerCase().includes(q) ||
+      e.category.toLowerCase().includes(q) ||
+      (e.note && e.note.toLowerCase().includes(q))
+    );
+  }, [expenses, searchQuery]);
+
   const handleLongPress = (item: Expense) => {
     Alert.alert(item.title, 'What would you like to do?', [
       {
-        text: '✏️  Edit',
-        onPress: () => router.push({ pathname: '/add-expense', params: { expenseId: item.id, title: item.title, note: item.note, amount: String(item.amount), category: item.category, categoryIcon: item.categoryIcon, date: item.date } }),
+        text: 'Edit',
+        onPress: () => router.push({
+          pathname: '/add-expense',
+          params: {
+            expenseId: item.id, title: item.title, note: item.note,
+            amount: String(item.amount), category: item.category,
+            date: item.date, budgetId: item.budgetId || '',
+          },
+        }),
       },
       {
-        text: '🗑️  Delete',
+        text: 'Delete',
         style: 'destructive',
         onPress: () => {
           Alert.alert('Delete Transaction', `Remove "${item.title}"? This cannot be undone.`, [
@@ -56,16 +85,16 @@ export default function TransactionsScreen() {
     ]);
   };
 
-  const sections = groupByDate(expenses);
+  const sections = groupByDate(filtered);
 
   const renderItem = ({ item }: { item: Expense }) => {
-    const color = CATEGORY_COLORS[item.category] ?? COLORS.tabInactive;
+    const iconName = (CATEGORY_ICONS[item.category] || item.categoryIcon || 'ellipse-outline') as any;
     const isIncome = item.category === 'Income';
     const time = new Date(item.date).toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     return (
       <TouchableOpacity style={styles.row} onLongPress={() => handleLongPress(item)} delayLongPress={400} activeOpacity={0.8}>
-        <View style={[styles.iconBox, { backgroundColor: color + '20' }]}>
-          <Text style={{ fontSize: 22 }}>{item.categoryIcon}</Text>
+        <View style={styles.iconBox}>
+          <Ionicons name={iconName} size={20} color="#fff" />
         </View>
         <View style={styles.rowInfo}>
           <Text style={styles.rowTitle} numberOfLines={1}>{item.title}</Text>
@@ -73,10 +102,9 @@ export default function TransactionsScreen() {
           <Text style={styles.rowMeta}>{item.category} · {time}</Text>
         </View>
         <View style={{ alignItems: 'flex-end', gap: 4 }}>
-          <Text style={[styles.rowAmount, { color: isIncome ? COLORS.income : COLORS.expense }]}>
+          <Text style={[styles.rowAmount, { color: isIncome ? '#30D158' : '#FF453A' }]}>
             {isIncome ? '+' : '-'}₹{item.amount.toLocaleString()}
           </Text>
-          <Ionicons name="ellipsis-horizontal" size={14} color={COLORS.textTertiary} />
         </View>
       </TouchableOpacity>
     );
@@ -88,33 +116,53 @@ export default function TransactionsScreen() {
         <Text style={styles.title}>Transactions</Text>
         <Text style={styles.hint}>Hold to edit or delete</Text>
       </View>
+
+      {/* Search */}
+      <View style={styles.searchContainer}>
+        <Ionicons name="search" size={18} color="#555" style={{ marginRight: 10 }} />
+        <TextInput
+          style={styles.searchInput}
+          placeholder="Search transactions..."
+          placeholderTextColor="#555"
+          value={searchQuery}
+          onChangeText={setSearchQuery}
+          autoCapitalize="none"
+        />
+        {searchQuery.length > 0 && (
+          <TouchableOpacity onPress={() => setSearchQuery('')}>
+            <Ionicons name="close-circle" size={18} color="#555" />
+          </TouchableOpacity>
+        )}
+      </View>
+
       {loading ? (
-        <ActivityIndicator color={COLORS.primary} style={{ marginTop: 40 }} />
-      ) : expenses.length === 0 ? (
+        <ActivityIndicator color="#fff" style={{ marginTop: 40 }} />
+      ) : filtered.length === 0 ? (
         <View style={styles.empty}>
-          <Ionicons name="receipt-outline" size={52} color={COLORS.textTertiary} />
-          <Text style={styles.emptyText}>No transactions yet</Text>
+          <Ionicons name="receipt-outline" size={52} color="#333" />
+          <Text style={styles.emptyText}>{searchQuery ? 'No results found' : 'No transactions yet'}</Text>
         </View>
       ) : (
         <SectionList
           sections={sections}
           keyExtractor={(item) => item.id ?? item.title + item.date}
           renderItem={renderItem}
+          contentContainerStyle={{ paddingHorizontal: 20 }}
           renderSectionHeader={({ section: { title } }) => (
             <View style={styles.sectionHeader}><Text style={styles.sectionTitle}>{title}</Text></View>
           )}
           ListFooterComponent={() => (
             <View style={styles.footer}>
               <Text style={styles.footerSummary}>
-                Total cash flow: ₹{expenses.reduce((acc, e) => e.category === 'Income' ? acc + e.amount : acc - e.amount, 0).toLocaleString()}
+                Total cash flow: ₹{filtered.reduce((acc, e) => e.category === 'Income' ? acc + e.amount : acc - e.amount, 0).toLocaleString()}
               </Text>
-              <Text style={styles.footerCount}>{expenses.length} transactions</Text>
+              <Text style={styles.footerCount}>{filtered.length} transactions</Text>
             </View>
           )}
         />
       )}
 
-      {/* FAB to add new transaction */}
+      {/* FAB */}
       <TouchableOpacity style={styles.fab} onPress={() => router.push('/add-expense')}>
         <Ionicons name="add" size={28} color="#fff" />
       </TouchableOpacity>
@@ -123,34 +171,46 @@ export default function TransactionsScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
+  root: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row', alignItems: 'baseline', justifyContent: 'space-between',
-    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 16,
+    paddingHorizontal: 20, paddingTop: 12, paddingBottom: 8,
   },
-  title: { fontSize: 32, fontWeight: '800', color: COLORS.textPrimary },
-  hint: { fontSize: 13, color: COLORS.textTertiary },
-  sectionHeader: { paddingTop: 20, paddingBottom: 10 },
-  sectionTitle: { fontSize: 14, fontWeight: '600', color: COLORS.textSecondary, textTransform: 'uppercase', letterSpacing: 1 },
+  title: { fontSize: 28, fontWeight: '800', color: '#fff' },
+  hint: { fontSize: 12, color: '#555' },
+  searchContainer: {
+    flexDirection: 'row', alignItems: 'center',
+    marginHorizontal: 20, marginBottom: 12, marginTop: 4,
+    backgroundColor: '#0A0A0A', borderRadius: 14, paddingHorizontal: 16, height: 48,
+    borderWidth: 1, borderColor: '#1C1C1E',
+  },
+  searchInput: { flex: 1, fontSize: 16, color: '#fff' },
+  sectionHeader: { paddingTop: 16, paddingBottom: 8 },
+  sectionTitle: { fontSize: 12, fontWeight: '700', color: '#8E8E93', textTransform: 'uppercase', letterSpacing: 1 },
   row: {
     flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.card, borderRadius: 18, padding: 16, marginBottom: 10,
+    backgroundColor: '#0A0A0A', borderRadius: 16, padding: 16, marginBottom: 8,
+    borderWidth: 1, borderColor: '#1C1C1E',
   },
-  iconBox: { width: 52, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
+  iconBox: {
+    width: 44, height: 44, borderRadius: 14,
+    backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#2C2C2E',
+    alignItems: 'center', justifyContent: 'center', marginRight: 14,
+  },
   rowInfo: { flex: 1 },
-  rowTitle: { fontSize: 17, fontWeight: '600', color: COLORS.textPrimary },
-  rowNote: { fontSize: 14, color: COLORS.textSecondary, marginTop: 2 },
-  rowMeta: { fontSize: 13, color: COLORS.textTertiary, marginTop: 4 },
-  rowAmount: { fontSize: 17, fontWeight: '700' },
+  rowTitle: { fontSize: 16, fontWeight: '600', color: '#fff' },
+  rowNote: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
+  rowMeta: { fontSize: 12, color: '#555', marginTop: 4 },
+  rowAmount: { fontSize: 16, fontWeight: '700' },
   footer: { alignItems: 'center', marginTop: 32, paddingBottom: 100 },
-  footerSummary: { fontSize: 15, color: COLORS.textSecondary, marginBottom: 4 },
-  footerCount: { fontSize: 13, color: COLORS.textTertiary },
+  footerSummary: { fontSize: 14, color: '#8E8E93', marginBottom: 4 },
+  footerCount: { fontSize: 12, color: '#555' },
   empty: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 12 },
-  emptyText: { fontSize: 18, color: COLORS.textTertiary },
+  emptyText: { fontSize: 17, color: '#444' },
   fab: {
     position: 'absolute', bottom: 28, right: 24,
-    width: 58, height: 58, borderRadius: 16, backgroundColor: COLORS.card,
+    width: 56, height: 56, borderRadius: 28,
+    backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#333',
     alignItems: 'center', justifyContent: 'center',
-    shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.4, shadowRadius: 12, elevation: 10,
   },
 });

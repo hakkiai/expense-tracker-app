@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import {
   StyleSheet, View, Text, TouchableOpacity,
-  ScrollView, ActivityIndicator, Dimensions, Image,
-  Alert,
+  ScrollView, ActivityIndicator, Image,
+  Alert, Modal, TextInput, Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import Animated, {
@@ -12,8 +12,7 @@ import Animated, {
 import { Ionicons } from '@expo/vector-icons';
 import { auth } from '@/config/firebaseConfig';
 import { router } from 'expo-router';
-import { subscribeToExpenses, Expense } from '@/lib/firestore';
-import { COLORS, CATEGORY_COLORS } from '@/constants/theme';
+import { subscribeToExpenses, subscribeToBudgets, addBudget, Expense, Budget } from '@/lib/firestore';
 import * as ImagePicker from 'expo-image-picker';
 
 const { width } = Dimensions.get('window');
@@ -37,26 +36,60 @@ function RGBRing({ size, children }: { size: number; children: React.ReactNode }
   );
 }
 
-function ExpenseRow({ item }: { item: Expense }) {
-  const color = CATEGORY_COLORS[item.category] ?? COLORS.tabInactive;
-  const isIncome = item.category === 'Income';
-  const time = new Date(item.date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+// ─── RGB FAB ──────────────────────────────────────────────────────────────────
+function RGBFab({ onPress }: { onPress: () => void }) {
+  const progress = useSharedValue(0);
+  useEffect(() => {
+    progress.value = withRepeat(withTiming(1, { duration: 2500, easing: Easing.linear }), -1, false);
+  }, []);
+  const ringStyle = useAnimatedStyle(() => ({
+    borderColor: interpolateColor(progress.value,
+      [0, 0.25, 0.5, 0.75, 1],
+      ['#0A84FF', '#BF5AF2', '#FF2D55', '#FF9F0A', '#0A84FF'],
+    ),
+  }));
   return (
-    <View style={styles.txRow}>
-      <View style={[styles.txIcon, { backgroundColor: color + '20' }]}>
-        <Text style={{ fontSize: 20 }}>{item.categoryIcon}</Text>
+    <Animated.View style={[styles.fabRing, ringStyle]}>
+      <TouchableOpacity style={styles.fab} onPress={onPress} activeOpacity={0.85}>
+        <Ionicons name="add" size={32} color="#fff" />
+      </TouchableOpacity>
+    </Animated.View>
+  );
+}
+
+// ─── Budget Card ──────────────────────────────────────────────────────────────
+function BudgetCard({ budget, spent }: { budget: Budget; spent: number }) {
+  const remaining = Math.max(0, budget.threshold - spent);
+  const pct = budget.threshold > 0 ? Math.min(spent / budget.threshold, 1) : 0;
+  const overBudget = spent > budget.threshold;
+
+  return (
+    <TouchableOpacity
+      style={styles.budgetCard}
+      onPress={() => router.push({ pathname: '/budget-detail', params: { budgetId: budget.id!, budgetName: budget.name } })}
+      activeOpacity={0.85}
+    >
+      <View style={styles.budgetHeader}>
+        <View style={styles.budgetIconBox}>
+          <Ionicons name={(budget.iconName || 'wallet-outline') as any} size={22} color="#fff" />
+        </View>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.budgetName}>{budget.name}</Text>
+          <Text style={styles.budgetThreshold}>Budget: ₹{budget.threshold.toLocaleString()}</Text>
+        </View>
+        <View style={{ alignItems: 'flex-end' }}>
+          <Text style={[styles.budgetRemaining, overBudget && { color: '#FF453A' }]}>
+            ₹{remaining.toLocaleString()}
+          </Text>
+          <Text style={styles.budgetRemainingLabel}>{overBudget ? 'over budget' : 'remaining'}</Text>
+        </View>
       </View>
-      <View style={styles.txInfo}>
-        <Text style={styles.txTitle} numberOfLines={1}>{item.title}</Text>
-        <Text style={styles.txSub}>{item.category}</Text>
+      {/* Progress bar */}
+      <View style={styles.progressTrack}>
+        <View style={[styles.progressFill, { width: `${pct * 100}%`, backgroundColor: overBudget ? '#FF453A' : '#fff' }]} />
       </View>
-      <View style={{ alignItems: 'flex-end' }}>
-        <Text style={[styles.txAmount, { color: isIncome ? COLORS.income : COLORS.expense }]}>
-          {isIncome ? '+' : '-'}₹{Math.abs(item.amount).toLocaleString()}
-        </Text>
-        <Text style={styles.txDate}>{time}</Text>
-      </View>
-    </View>
+      <Text style={styles.budgetSpent}>₹{spent.toLocaleString()} spent</Text>
+    </TouchableOpacity>
   );
 }
 
@@ -66,19 +99,28 @@ export default function HomeScreen() {
   const initial = displayName.charAt(0).toUpperCase();
 
   const [expenses, setExpenses] = useState<Expense[]>([]);
+  const [budgets, setBudgets] = useState<Budget[]>([]);
   const [loading, setLoading] = useState(true);
   const [profilePhoto, setProfilePhoto] = useState<string | null>(null);
+  const [showFabMenu, setShowFabMenu] = useState(false);
+  const [showCreateBudget, setShowCreateBudget] = useState(false);
+  const [newBudgetName, setNewBudgetName] = useState('');
+  const [newBudgetThreshold, setNewBudgetThreshold] = useState('');
 
   useEffect(() => {
     if (!user) return;
-    const unsub = subscribeToExpenses(user.uid, (data) => { setExpenses(data); setLoading(false); });
-    return unsub;
+    const unsub1 = subscribeToExpenses(user.uid, (data) => { setExpenses(data); setLoading(false); });
+    const unsub2 = subscribeToBudgets(user.uid, (data) => { setBudgets(data); });
+    return () => { unsub1(); unsub2(); };
   }, []);
 
-  const balance = expenses.reduce((acc, e) => e.category === 'Income' ? acc + e.amount : acc - e.amount, 0);
   const totalIncome = expenses.filter(e => e.category === 'Income').reduce((a, e) => a + e.amount, 0);
   const totalSpent = expenses.filter(e => e.category !== 'Income').reduce((a, e) => a + e.amount, 0);
-  const recent = expenses.slice(0, 6);
+  const balance = totalIncome - totalSpent;
+
+  // Calculate spent per budget
+  const spentByBudget = (budgetId: string) =>
+    expenses.filter(e => e.budgetId === budgetId && e.category !== 'Income').reduce((a, e) => a + e.amount, 0);
 
   const pickProfilePhoto = async () => {
     try {
@@ -93,161 +135,237 @@ export default function HomeScreen() {
       });
       if (!result.canceled && result.assets[0]) setProfilePhoto(result.assets[0].uri);
     } catch {
-      router.push('/profile');
+      // fallback
+    }
+  };
+
+  const handleCreateBudget = async () => {
+    if (!user || !newBudgetName.trim()) return;
+    const threshold = parseFloat(newBudgetThreshold) || 0;
+    if (threshold <= 0) return Alert.alert('Error', 'Please enter a valid budget amount.');
+    try {
+      await addBudget({
+        name: newBudgetName.trim(),
+        threshold,
+        iconName: 'wallet-outline',
+        uid: user.uid,
+      });
+      setNewBudgetName('');
+      setNewBudgetThreshold('');
+      setShowCreateBudget(false);
+    } catch (e: any) {
+      Alert.alert('Error', e.message);
+    }
+  };
+
+  const handleFabAction = (action: 'expense' | 'income' | 'budget') => {
+    setShowFabMenu(false);
+    if (action === 'budget') {
+      setShowCreateBudget(true);
+    } else {
+      router.push(`/add-expense?type=${action}`);
     }
   };
 
   return (
     <SafeAreaView style={styles.root} edges={['top']}>
-      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+      <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 120 }}>
 
         {/* ── Header ── */}
         <View style={styles.header}>
-          <View style={styles.headerLeft}>
-            <TouchableOpacity style={styles.iconBtn}>
-              <Ionicons name="search" size={24} color={COLORS.textSecondary} />
-            </TouchableOpacity>
-            <View style={{ width: 8 }} />
-            <View>
-              <Text style={styles.welcomeLabel}>Welcome,</Text>
-              <Text style={styles.welcomeName}>{displayName}</Text>
-            </View>
-          </View>
-          <View style={styles.headerRight}>
-            <TouchableOpacity onPress={pickProfilePhoto}>
-              <RGBRing size={54}>
-                {profilePhoto ? (
-                  <Image source={{ uri: profilePhoto }} style={{ width: 54, height: 54, borderRadius: 27 }} />
-                ) : (
-                  <View style={[styles.avatar, { width: 54, height: 54, borderRadius: 27 }]}>
-                    <Text style={[styles.avatarText, { fontSize: 22 }]}>{initial}</Text>
-                  </View>
-                )}
-              </RGBRing>
-            </TouchableOpacity>
-          </View>
-        </View>
-
-        {/* ── Balance Card ── */}
-        <View style={styles.balanceCard}>
           <View>
-            <Text style={styles.balanceLabel}>Your balance</Text>
-            <Text style={[styles.balanceAmount, { color: balance >= 0 ? COLORS.textPrimary : COLORS.expense }]}>
-              ₹{Math.abs(balance).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </Text>
+            <Text style={styles.welcomeLabel}>Welcome back,</Text>
+            <Text style={styles.welcomeName}>{displayName}</Text>
           </View>
-          <TouchableOpacity style={styles.addMoneyBtn} onPress={() => router.push('/add-expense')}>
-            <Ionicons name="add" size={26} color={COLORS.bg} />
+          <TouchableOpacity onPress={pickProfilePhoto}>
+            <RGBRing size={48}>
+              {profilePhoto ? (
+                <Image source={{ uri: profilePhoto }} style={{ width: 48, height: 48, borderRadius: 24 }} />
+              ) : (
+                <View style={styles.avatar}>
+                  <Text style={styles.avatarText}>{initial}</Text>
+                </View>
+              )}
+            </RGBRing>
           </TouchableOpacity>
         </View>
 
-        {/* ── Stats ── */}
-        <View style={styles.statsRow}>
-          <View style={[styles.statCard, { borderLeftColor: COLORS.income }]}>
-            <View style={styles.statIconRow}>
-              <Ionicons name="arrow-up-circle-outline" size={18} color={COLORS.income} />
-              <Text style={styles.statLabel}>Income</Text>
-            </View>
-            <Text style={[styles.statValue, { color: COLORS.income }]}>₹{totalIncome.toLocaleString()}</Text>
+        {/* ── Overview ── */}
+        <View style={styles.overviewRow}>
+          <View style={styles.overviewCard}>
+            <Text style={styles.overviewLabel}>Balance</Text>
+            <Text style={[styles.overviewAmount, { color: balance >= 0 ? '#fff' : '#FF453A' }]}>
+              ₹{Math.abs(balance).toLocaleString()}
+            </Text>
           </View>
-          <View style={[styles.statCard, { borderLeftColor: COLORS.expense }]}>
-            <View style={styles.statIconRow}>
-              <Ionicons name="arrow-down-circle-outline" size={18} color={COLORS.expense} />
-              <Text style={styles.statLabel}>Expenses</Text>
-            </View>
-            <Text style={[styles.statValue, { color: COLORS.expense }]}>₹{totalSpent.toLocaleString()}</Text>
+          <View style={styles.overviewCard}>
+            <Text style={styles.overviewLabel}>Income</Text>
+            <Text style={[styles.overviewAmount, { color: '#30D158' }]}>₹{totalIncome.toLocaleString()}</Text>
+          </View>
+          <View style={styles.overviewCard}>
+            <Text style={styles.overviewLabel}>Spent</Text>
+            <Text style={[styles.overviewAmount, { color: '#FF453A' }]}>₹{totalSpent.toLocaleString()}</Text>
           </View>
         </View>
 
-        {/* ── Recent ── */}
+        {/* ── Budget Envelopes ── */}
         <View style={styles.section}>
-          <View style={styles.sectionHeader}>
-            <Text style={styles.sectionTitle}>Recent Transactions</Text>
-            <TouchableOpacity onPress={() => router.push('/(tabs)/transactions')}>
-              <Text style={styles.seeAll}>See all</Text>
-            </TouchableOpacity>
-          </View>
-
+          <Text style={styles.sectionTitle}>Budget Envelopes</Text>
           {loading ? (
-            <ActivityIndicator color={COLORS.primary} style={{ marginTop: 24 }} />
-          ) : recent.length === 0 ? (
-            <View style={styles.emptyBox}>
-              <Ionicons name="receipt-outline" size={44} color={COLORS.textTertiary} />
-              <Text style={styles.emptyText}>No transactions yet{'\n'}Tap + to add one</Text>
-            </View>
+            <ActivityIndicator color="#fff" style={{ marginTop: 24 }} />
+          ) : budgets.length === 0 ? (
+            <TouchableOpacity style={styles.emptyEnvelope} onPress={() => setShowCreateBudget(true)}>
+              <Ionicons name="add-circle-outline" size={36} color="#333" />
+              <Text style={styles.emptyText}>Create your first budget{'\n'}envelope to get started</Text>
+            </TouchableOpacity>
           ) : (
-            <View style={styles.txList}>
-              {recent.map((item) => <ExpenseRow key={item.id ?? item.title + item.date} item={item} />)}
-            </View>
+            budgets.map((b) => (
+              <BudgetCard key={b.id} budget={b} spent={spentByBudget(b.id!)} />
+            ))
           )}
         </View>
+
       </ScrollView>
 
+      {/* ── FAB menu overlay ── */}
+      <Modal transparent visible={showFabMenu} animationType="fade" onRequestClose={() => setShowFabMenu(false)}>
+        <TouchableOpacity style={styles.fabMenuOverlay} activeOpacity={1} onPress={() => setShowFabMenu(false)}>
+          <View style={styles.fabMenuContainer}>
+            <TouchableOpacity style={styles.fabMenuBtn} onPress={() => handleFabAction('budget')}>
+              <Ionicons name="folder-outline" size={22} color="#fff" />
+              <Text style={styles.fabMenuLabel}>Create Budget</Text>
+            </TouchableOpacity>
+            <View style={styles.fabMenuDivider} />
+            <TouchableOpacity style={styles.fabMenuBtn} onPress={() => handleFabAction('income')}>
+              <Ionicons name="arrow-up-circle-outline" size={22} color="#30D158" />
+              <Text style={[styles.fabMenuLabel, { color: '#30D158' }]}>Add Income</Text>
+            </TouchableOpacity>
+            <View style={styles.fabMenuDivider} />
+            <TouchableOpacity style={styles.fabMenuBtn} onPress={() => handleFabAction('expense')}>
+              <Ionicons name="arrow-down-circle-outline" size={22} color="#FF453A" />
+              <Text style={[styles.fabMenuLabel, { color: '#FF453A' }]}>Add Expense</Text>
+            </TouchableOpacity>
+          </View>
+        </TouchableOpacity>
+      </Modal>
+
+      {/* ── Create Budget Modal ── */}
+      <Modal transparent visible={showCreateBudget} animationType="slide" onRequestClose={() => setShowCreateBudget(false)}>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalCard}>
+            <Text style={styles.modalTitle}>Create Budget Envelope</Text>
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Budget name (e.g. Food, Travel)"
+              placeholderTextColor="#555"
+              value={newBudgetName}
+              onChangeText={setNewBudgetName}
+              autoFocus
+            />
+            <TextInput
+              style={[styles.modalInput, { marginTop: 12 }]}
+              placeholder="Income threshold (₹)"
+              placeholderTextColor="#555"
+              value={newBudgetThreshold}
+              onChangeText={setNewBudgetThreshold}
+              keyboardType="decimal-pad"
+            />
+            <View style={styles.modalBtnRow}>
+              <TouchableOpacity style={styles.modalBtnCancel} onPress={() => { setShowCreateBudget(false); setNewBudgetName(''); setNewBudgetThreshold(''); }}>
+                <Text style={{ color: '#8E8E93', fontWeight: '700', fontSize: 16 }}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={styles.modalBtnSave} onPress={handleCreateBudget}>
+                <Text style={{ color: '#000', fontWeight: '700', fontSize: 16 }}>Create</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
       {/* ── FAB ── */}
-      <TouchableOpacity style={styles.fab} onPress={() => router.push('/add-expense')}>
-        <Ionicons name="add" size={30} color="#fff" />
-      </TouchableOpacity>
+      <RGBFab onPress={() => setShowFabMenu(prev => !prev)} />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
+  root: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
     paddingHorizontal: 20, paddingTop: 12, paddingBottom: 20,
   },
-  headerLeft: { flexDirection: 'row', alignItems: 'center', gap: 14 },
-  headerRight: { flexDirection: 'row', gap: 8 },
+  welcomeLabel: { fontSize: 14, color: '#8E8E93', marginBottom: 2 },
+  welcomeName: { fontSize: 22, fontWeight: '800', color: '#fff' },
   avatar: {
-    width: 50, height: 50, borderRadius: 25, backgroundColor: COLORS.primary,
+    width: 48, height: 48, borderRadius: 24, backgroundColor: '#1C1C1E',
     alignItems: 'center', justifyContent: 'center',
   },
   avatarText: { fontSize: 20, fontWeight: '700', color: '#fff' },
-  iconBtn: {
-    width: 40, height: 40, borderRadius: 20, backgroundColor: COLORS.card,
-    alignItems: 'center', justifyContent: 'center',
+
+  // Overview
+  overviewRow: { flexDirection: 'row', paddingHorizontal: 16, gap: 8, marginBottom: 28 },
+  overviewCard: {
+    flex: 1, backgroundColor: '#0A0A0A', borderRadius: 16, padding: 16,
+    borderWidth: 1, borderColor: '#1C1C1E',
   },
-  welcomeLabel: { fontSize: 15, color: COLORS.textSecondary },
-  welcomeName: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary },
-  balanceCard: {
-    marginHorizontal: 20, marginBottom: 16, backgroundColor: COLORS.card,
-    borderRadius: 24, padding: 28, flexDirection: 'row',
-    alignItems: 'center', justifyContent: 'space-between',
-  },
-  balanceLabel: { fontSize: 16, color: COLORS.textSecondary, marginBottom: 8 },
-  balanceAmount: { fontSize: 38, fontWeight: '800', letterSpacing: -1 },
-  addMoneyBtn: {
-    width: 58, height: 58, borderRadius: 29,
-    backgroundColor: COLORS.textPrimary, alignItems: 'center', justifyContent: 'center',
-  },
-  statsRow: { flexDirection: 'row', paddingHorizontal: 20, gap: 12, marginBottom: 32 },
-  statCard: { flex: 1, backgroundColor: COLORS.card, borderRadius: 18, padding: 20, borderLeftWidth: 3 },
-  statIconRow: { flexDirection: 'row', alignItems: 'center', gap: 6, marginBottom: 10 },
-  statLabel: { fontSize: 15, color: COLORS.textSecondary },
-  statValue: { fontSize: 22, fontWeight: '700' },
+  overviewLabel: { fontSize: 12, color: '#8E8E93', marginBottom: 6 },
+  overviewAmount: { fontSize: 18, fontWeight: '800' },
+
+  // Section
   section: { paddingHorizontal: 20 },
-  sectionHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 },
-  sectionTitle: { fontSize: 22, fontWeight: '700', color: COLORS.textPrimary },
-  seeAll: { fontSize: 16, color: COLORS.primary, fontWeight: '600' },
-  txList: { gap: 10 },
-  txRow: {
-    flexDirection: 'row', alignItems: 'center',
-    backgroundColor: COLORS.card, borderRadius: 18, padding: 16,
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#8E8E93', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 16 },
+
+  // Budget Card
+  budgetCard: {
+    backgroundColor: '#0A0A0A', borderRadius: 20, padding: 20, marginBottom: 12,
+    borderWidth: 1, borderColor: '#1C1C1E',
   },
-  txIcon: { width: 50, height: 50, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginRight: 14 },
-  txInfo: { flex: 1 },
-  txTitle: { fontSize: 17, fontWeight: '600', color: COLORS.textPrimary },
-  txSub: { fontSize: 14, color: COLORS.textSecondary, marginTop: 2 },
-  txAmount: { fontSize: 17, fontWeight: '700' },
-  txDate: { fontSize: 13, color: COLORS.textTertiary, marginTop: 2 },
-  emptyBox: { alignItems: 'center', paddingVertical: 40, gap: 12 },
-  emptyText: { fontSize: 16, color: COLORS.textTertiary, textAlign: 'center', lineHeight: 24 },
-  fab: {
+  budgetHeader: { flexDirection: 'row', alignItems: 'center', marginBottom: 16 },
+  budgetIconBox: {
+    width: 42, height: 42, borderRadius: 12, backgroundColor: '#1C1C1E',
+    borderWidth: 1, borderColor: '#2C2C2E',
+    alignItems: 'center', justifyContent: 'center', marginRight: 14,
+  },
+  budgetName: { fontSize: 18, fontWeight: '700', color: '#fff' },
+  budgetThreshold: { fontSize: 13, color: '#8E8E93', marginTop: 2 },
+  budgetRemaining: { fontSize: 18, fontWeight: '800', color: '#fff' },
+  budgetRemainingLabel: { fontSize: 11, color: '#8E8E93', marginTop: 2 },
+  progressTrack: { height: 6, backgroundColor: '#1C1C1E', borderRadius: 3, overflow: 'hidden', marginBottom: 8 },
+  progressFill: { height: 6, borderRadius: 3 },
+  budgetSpent: { fontSize: 12, color: '#555' },
+
+  // Empty state
+  emptyEnvelope: {
+    alignItems: 'center', paddingVertical: 48, gap: 12,
+    borderRadius: 20, borderWidth: 1, borderColor: '#1C1C1E', borderStyle: 'dashed',
+  },
+  emptyText: { fontSize: 15, color: '#444', textAlign: 'center', lineHeight: 22 },
+
+  // FAB
+  fabRing: {
     position: 'absolute', bottom: 32, right: 24,
-    width: 64, height: 64, borderRadius: 20, backgroundColor: COLORS.primary,
-    alignItems: 'center', justifyContent: 'center',
-    shadowColor: COLORS.primary, shadowOffset: { width: 0, height: 8 },
-    shadowOpacity: 0.5, shadowRadius: 16, elevation: 15,
+    width: 70, height: 70, borderRadius: 35, borderWidth: 2,
+    alignItems: 'center', justifyContent: 'center', padding: 2,
   },
+  fab: {
+    width: 62, height: 62, borderRadius: 31, backgroundColor: '#000',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  fabMenuOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.75)', justifyContent: 'flex-end', padding: 24, paddingBottom: 112 },
+  fabMenuContainer: { backgroundColor: '#0A0A0A', borderRadius: 20, borderWidth: 1, borderColor: '#222', overflow: 'hidden' },
+  fabMenuBtn: { flexDirection: 'row', alignItems: 'center', gap: 14, padding: 20 },
+  fabMenuLabel: { fontSize: 17, fontWeight: '700', color: '#fff' },
+  fabMenuDivider: { height: 1, backgroundColor: '#1C1C1E' },
+
+  // Modals
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: '#0A0A0A', padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTopWidth: 1, borderColor: '#222' },
+  modalTitle: { fontSize: 22, fontWeight: '800', color: '#fff', marginBottom: 20 },
+  modalInput: {
+    backgroundColor: '#111', borderRadius: 14, height: 54, paddingHorizontal: 18,
+    color: '#fff', fontSize: 17, borderWidth: 1, borderColor: '#222',
+  },
+  modalBtnRow: { flexDirection: 'row', gap: 12, marginTop: 24 },
+  modalBtnCancel: { flex: 1, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#333' },
+  modalBtnSave: { flex: 1, height: 52, borderRadius: 14, alignItems: 'center', justifyContent: 'center', backgroundColor: '#fff' },
 });

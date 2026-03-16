@@ -1,7 +1,6 @@
 import { Tabs } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
-import { View, StyleSheet } from 'react-native';
-import { COLORS } from '@/constants/theme';
+import { StyleSheet } from 'react-native';
 
 type IoniconName = React.ComponentProps<typeof Ionicons>['name'];
 
@@ -15,8 +14,8 @@ export default function TabLayout() {
       screenOptions={{
         headerShown: false,
         tabBarStyle: styles.tabBar,
-        tabBarActiveTintColor: COLORS.tabActive,
-        tabBarInactiveTintColor: COLORS.tabInactive,
+        tabBarActiveTintColor: '#FFFFFF',
+        tabBarInactiveTintColor: '#555',
         tabBarLabelStyle: styles.tabLabel,
         tabBarShowLabel: true,
       }}
@@ -38,7 +37,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="analytics"
         options={{
-          title: 'Budgets',
+          title: 'Analytics',
           tabBarIcon: ({ color }) => <TabIcon name="pie-chart" color={color} />,
         }}
       />
@@ -55,8 +54,8 @@ export default function TabLayout() {
 
 const styles = StyleSheet.create({
   tabBar: {
-    backgroundColor: COLORS.card,
-    borderTopColor: COLORS.cardBorder,
+    backgroundColor: '#000000',
+    borderTopColor: '#1C1C1E',
     borderTopWidth: 1,
     height: 80,
     paddingBottom: 16,

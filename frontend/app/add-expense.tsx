@@ -14,39 +14,58 @@ import DateTimePicker from '@react-native-community/datetimepicker';
 
 const { width } = Dimensions.get('window');
 
-const TABS = ['Expense', 'Income', 'Transfer'];
+const TABS = ['Expense', 'Income'];
 
+// Icon-based categories — no emotes
 const DEFAULT_CATEGORIES = [
-  { label: 'Dining',    icon: '🍴', color: '#4B5E6B' }, // Darker blue-grey like screenshot
-  { label: 'Groceries', icon: '🍎', color: '#5C7444' }, // Forest green
-  { label: 'Shopping',  icon: '🛍️', color: '#8E4D5F' }, // Burgundy/Rose
-  { label: 'Transit',   icon: '🚋', color: '#A9922D' }, // Olive/Gold
-  { label: 'Entertainment', icon: '🍿', color: '#446A94' }, // Blue
-  { label: 'Bills & Fees', icon: '📄', color: '#3F6B4F' }, // Green
-  { label: 'Gifts',     icon: '🎁', color: '#8B5141' }, // Terracotta
-  { label: 'Beauty',    icon: '🌸', color: '#A98F2D' }, // Goldish
-  { label: 'Work',      icon: '💼', color: '#6A564A' }, // Brown
-  { label: 'Travel',    icon: '✈️', color: '#8B6A2D' }, // Tan
-  { label: 'Income',    icon: '🪙', color: '#9B924D' }, // Yellow-Green
-  { label: 'Balance Correction', icon: '📊', color: '#4B6A6B' }, // Teal
+  { label: 'Dining',           ionIcon: 'restaurant-outline'      },
+  { label: 'Groceries',        ionIcon: 'cart-outline'             },
+  { label: 'Shopping',         ionIcon: 'bag-handle-outline'       },
+  { label: 'Transit',          ionIcon: 'train-outline'             },
+  { label: 'Entertainment',    ionIcon: 'film-outline'              },
+  { label: 'Bills & Fees',     ionIcon: 'document-text-outline'     },
+  { label: 'Gifts',            ionIcon: 'gift-outline'              },
+  { label: 'Beauty',           ionIcon: 'color-palette-outline'     },
+  { label: 'Work',             ionIcon: 'briefcase-outline'         },
+  { label: 'Travel',           ionIcon: 'airplane-outline'          },
+  { label: 'Balance Correction', ionIcon: 'bar-chart-outline'       },
+];
+
+const INCOME_CATEGORIES = [
+  { label: 'Salary',      ionIcon: 'wallet-outline'          },
+  { label: 'Freelance',   ionIcon: 'laptop-outline'          },
+  { label: 'Investment',  ionIcon: 'trending-up-outline'     },
+  { label: 'Business',    ionIcon: 'storefront-outline'      },
+  { label: 'Gift',        ionIcon: 'gift-outline'             },
+  { label: 'Other Income', ionIcon: 'cash-outline'           },
 ];
 
 export default function AddExpenseScreen() {
   const user = auth.currentUser;
   const params = useLocalSearchParams<{
     expenseId?: string; title?: string; note?: string;
-    amount?: string; category?: string; categoryIcon?: string; date?: string;
+    amount?: string; category?: string; date?: string; type?: string;
+    budgetId?: string;
   }>();
   const isEdit = !!params.expenseId;
 
-  const [activeTab, setActiveTab] = useState(isEdit ? (params.category === 'Income' ? 'Income' : 'Expense') : 'Expense');
-  const [categories, setCategories] = useState(DEFAULT_CATEGORIES);
+  const initialTab = isEdit
+    ? (params.category === 'Income' ? 'Income' : 'Expense')
+    : (params.type === 'income' ? 'Income' : 'Expense');
 
-  const initialCategory = DEFAULT_CATEGORIES.find(c => c.label === params.category) ?? DEFAULT_CATEGORIES[0];
+  const [activeTab, setActiveTab] = useState(initialTab);
+  const [customCategories, setCustomCategories] = useState<typeof DEFAULT_CATEGORIES>([]);
+
+  const categories = activeTab === 'Income' ? INCOME_CATEGORIES : [...DEFAULT_CATEGORIES, ...customCategories];
+
+  const initialCategory = categories[0];
   const [title, setTitle] = useState(params.title ?? '');
   const [note, setNote] = useState(params.note ?? '');
   const [amount, setAmount] = useState(params.amount ?? '');
-  const [selectedCategory, setSelectedCategory] = useState(initialCategory);
+  const [selectedCategory, setSelectedCategory] = useState(() => {
+    const found = categories.find(c => c.label === params.category);
+    return found ?? categories[0];
+  });
   const [date, setDate] = useState(params.date ? new Date(params.date) : new Date());
   const [showDatePicker, setShowDatePicker] = useState(false);
   const [showTimePicker, setShowTimePicker] = useState(false);
@@ -56,8 +75,8 @@ export default function AddExpenseScreen() {
 
   const handleAddCategory = () => {
     if (!newCatLabel.trim()) return;
-    const newCat = { label: newCatLabel.trim(), icon: '📌', color: '#4B5E6B' };
-    setCategories(p => [...p, newCat]);
+    const newCat = { label: newCatLabel.trim(), ionIcon: 'pricetag-outline' };
+    setCustomCategories(p => [...p, newCat]);
     setSelectedCategory(newCat);
     setNewCatLabel('');
     setShowAddCategory(false);
@@ -67,22 +86,19 @@ export default function AddExpenseScreen() {
     if (!user) return;
     const num = parseFloat(amount || '0');
     if (num <= 0) return Alert.alert('Error', 'Please enter a valid amount.');
-    if (!title.trim()) {
-      // In Screenshot 3, the title might be the category if not provided?
-      // But let's keep it requirement to have a title or use category name.
-      setTitle(selectedCategory.label);
-    }
 
     setLoading(true);
     try {
-      const payload = {
+      const isIncome = activeTab === 'Income';
+      const payload: any = {
         title: title.trim() || selectedCategory.label,
         note: note.trim(),
         amount: num,
-        category: activeTab === 'Income' ? 'Income' : selectedCategory.label,
-        categoryIcon: activeTab === 'Income' ? '💰' : selectedCategory.icon,
+        category: isIncome ? 'Income' : selectedCategory.label,
+        categoryIcon: selectedCategory.ionIcon,
         date: date.toISOString(),
       };
+      if (params.budgetId) payload.budgetId = params.budgetId;
 
       if (isEdit && params.expenseId) {
         await updateExpense(user.uid, params.expenseId, payload);
@@ -100,16 +116,26 @@ export default function AddExpenseScreen() {
 
   return (
     <SafeAreaView style={styles.root}>
-      {/* Header Tabs */}
+      {/* ── Header ── */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => router.back()} style={styles.backBtn}>
-          <Ionicons name="arrow-back" size={24} color={COLORS.textSecondary} />
+          <Ionicons name="arrow-back" size={22} color="#fff" />
         </TouchableOpacity>
         <View style={styles.tabContainer}>
           {TABS.map(tab => (
-            <TouchableOpacity key={tab} onPress={() => setActiveTab(tab)} style={styles.tabItem}>
+            <TouchableOpacity
+              key={tab}
+              onPress={() => {
+                setActiveTab(tab);
+                setSelectedCategory(tab === 'Income' ? INCOME_CATEGORIES[0] : DEFAULT_CATEGORIES[0]);
+              }}
+              style={[styles.tabItem, activeTab === tab && styles.activeTabItem]}>
               <Text style={[styles.tabText, activeTab === tab && styles.activeTabText]}>
-                {tab === 'Expense' ? '▾ Expense' : tab === 'Income' ? '▴ Income' : '⇄ Transfer'}
+                {tab === 'Expense'
+                  ? <Ionicons name="arrow-down-circle-outline" size={14} color={activeTab === tab ? COLORS.expense : '#555'} />
+                  : <Ionicons name="arrow-up-circle-outline" size={14} color={activeTab === tab ? COLORS.income : '#555'} />
+                }
+                {'  '}{tab}
               </Text>
             </TouchableOpacity>
           ))}
@@ -122,18 +148,18 @@ export default function AddExpenseScreen() {
           {/* Title & Amount Row */}
           <View style={styles.topRow}>
             <TextInput style={styles.titleInput} value={title} onChangeText={setTitle}
-              placeholder="Add Transaction" placeholderTextColor={COLORS.textTertiary} />
+              placeholder="Title" placeholderTextColor="#333" />
             <View style={styles.amountBox}>
               <Text style={styles.currency}>₹</Text>
               <TextInput style={styles.amountInput} value={amount} onChangeText={setAmount}
-                keyboardType="decimal-pad" placeholder="0" placeholderTextColor={COLORS.textTertiary} />
+                keyboardType="decimal-pad" placeholder="0" placeholderTextColor="#333" />
             </View>
           </View>
 
           {/* Date Picker Row */}
           <View style={styles.dateControl}>
             <TouchableOpacity style={styles.dateField} onPress={() => setShowDatePicker(true)}>
-              <Ionicons name="calendar-outline" size={20} color={COLORS.textTertiary} />
+              <Ionicons name="calendar-outline" size={18} color="#888" />
               <Text style={styles.dateValue}>{isToday ? 'Today' : fmtDate}</Text>
             </TouchableOpacity>
             <TouchableOpacity style={styles.timeField} onPress={() => setShowTimePicker(true)}>
@@ -141,35 +167,49 @@ export default function AddExpenseScreen() {
             </TouchableOpacity>
           </View>
 
-          {/* Category Grid Section */}
+          {/* Category Grid */}
           <View style={styles.categoryWrap}>
-            <Text style={styles.sectionTitle}>Select Category</Text>
+            <Text style={styles.sectionTitle}>Category</Text>
             <View style={styles.categoryGrid}>
-              {categories.map((cat) => (
-                <TouchableOpacity key={cat.label}
-                  style={[styles.catItem, selectedCategory.label === cat.label && styles.catItemActive]}
-                  onPress={() => setSelectedCategory(cat)}>
-                  <View style={[styles.catIconBox, { backgroundColor: cat.color }]}>
-                    <Text style={{ fontSize: 24 }}>{cat.icon}</Text>
+              {categories.map((cat) => {
+                const isSelected = selectedCategory.label === cat.label;
+                return (
+                  <TouchableOpacity key={cat.label}
+                    style={[styles.catItem]}
+                    onPress={() => setSelectedCategory(cat)}>
+                    <View style={[styles.catIconBox, isSelected && styles.catIconBoxActive]}>
+                      <Ionicons name={cat.ionIcon as any} size={26} color={isSelected ? '#000' : '#fff'} />
+                    </View>
+                    <Text style={[styles.catLabel, isSelected && styles.catLabelActive]} numberOfLines={1}>
+                      {cat.label}
+                    </Text>
+                  </TouchableOpacity>
+                );
+              })}
+              {/* Add custom category (only for expense) */}
+              {activeTab === 'Expense' && (
+                <TouchableOpacity style={styles.catItem} onPress={() => setShowAddCategory(true)}>
+                  <View style={[styles.catIconBox]}>
+                    <Ionicons name="add" size={26} color="#555" />
                   </View>
-                  <Text style={styles.catLabel} numberOfLines={1}>{cat.label}</Text>
+                  <Text style={styles.catLabel}>More</Text>
                 </TouchableOpacity>
-              ))}
-              <TouchableOpacity style={styles.catItem} onPress={() => setShowAddCategory(true)}>
-                <View style={[styles.catIconBox, { backgroundColor: COLORS.cardElevated }]}>
-                  <Ionicons name="add" size={28} color={COLORS.textSecondary} />
-                </View>
-                <Text style={styles.catLabel}>More</Text>
-              </TouchableOpacity>
+              )}
             </View>
           </View>
 
+          {/* Note */}
           <TextInput style={styles.noteInput} value={note} onChangeText={setNote}
-            placeholder="Add note..." placeholderTextColor={COLORS.textTertiary} multiline />
+            placeholder="Add note..." placeholderTextColor="#333" multiline />
 
-          <TouchableOpacity style={styles.saveBtn} onPress={handleSubmit} disabled={loading}>
-            {loading ? <ActivityIndicator color="#fff" /> : (
-              <Text style={styles.saveBtnText}>{isEdit ? 'Update' : 'Save'}</Text>
+          {/* Save Button */}
+          <TouchableOpacity
+            style={[styles.saveBtn, { backgroundColor: activeTab === 'Income' ? COLORS.income : '#FFFFFF' }]}
+            onPress={handleSubmit} disabled={loading}>
+            {loading ? <ActivityIndicator color={activeTab === 'Income' ? '#000' : '#000'} /> : (
+              <Text style={[styles.saveBtnText, { color: '#000' }]}>
+                {isEdit ? 'Update' : activeTab === 'Income' ? 'Add Income' : 'Add Expense'}
+              </Text>
             )}
           </TouchableOpacity>
 
@@ -191,14 +231,14 @@ export default function AddExpenseScreen() {
           <View style={styles.modalCard}>
             <Text style={styles.modalTitle}>New Category</Text>
             <TextInput style={styles.modalInput} value={newCatLabel} onChangeText={setNewCatLabel}
-              placeholder="e.g. Subscriptions" placeholderTextColor={COLORS.textTertiary} autoFocus />
+              placeholder="e.g. Subscriptions" placeholderTextColor="#444" autoFocus />
             <View style={{ flexDirection: 'row', gap: 12, marginTop: 24 }}>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: COLORS.cardElevated }]}
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#1C1C1E', borderWidth: 1, borderColor: '#333' }]}
                 onPress={() => { setShowAddCategory(false); setNewCatLabel(''); }}>
-                <Text style={{ color: COLORS.textSecondary, fontWeight: '700' }}>Cancel</Text>
+                <Text style={{ color: '#8E8E93', fontWeight: '700' }}>Cancel</Text>
               </TouchableOpacity>
-              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: COLORS.primary }]} onPress={handleAddCategory}>
-                <Text style={{ color: '#fff', fontWeight: '700' }}>Add</Text>
+              <TouchableOpacity style={[styles.modalBtn, { backgroundColor: '#FFFFFF' }]} onPress={handleAddCategory}>
+                <Text style={{ color: '#000', fontWeight: '700' }}>Add</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -209,57 +249,66 @@ export default function AddExpenseScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
+  root: { flex: 1, backgroundColor: '#000000' },
   header: {
     flexDirection: 'row', alignItems: 'center',
     paddingHorizontal: 16, paddingTop: 8, paddingBottom: 16,
+    borderBottomWidth: 1, borderBottomColor: '#111',
   },
-  backBtn: { width: 44, height: 44, alignItems: 'center', justifyContent: 'center' },
-  tabContainer: { flex: 1, flexDirection: 'row', justifyContent: 'space-around', alignItems: 'center' },
-  tabItem: { paddingVertical: 8, paddingHorizontal: 10 },
-  tabText: { fontSize: 16, color: COLORS.textTertiary, fontWeight: '600' },
-  activeTabText: { color: COLORS.textPrimary },
+  backBtn: { width: 40, height: 40, alignItems: 'center', justifyContent: 'center' },
+  tabContainer: { flex: 1, flexDirection: 'row', justifyContent: 'center', gap: 8 },
+  tabItem: { paddingVertical: 8, paddingHorizontal: 16, borderRadius: 20, borderWidth: 1, borderColor: '#222' },
+  activeTabItem: { borderColor: '#444', backgroundColor: '#111' },
+  tabText: { fontSize: 15, color: '#555', fontWeight: '600' },
+  activeTabText: { color: '#FFFFFF' },
   scroll: { paddingBottom: 60 },
   topRow: {
     flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
-    paddingHorizontal: 24, paddingTop: 10, paddingBottom: 24,
+    paddingHorizontal: 24, paddingTop: 24, paddingBottom: 24,
+    borderBottomWidth: 1, borderBottomColor: '#111',
   },
-  titleInput: { fontSize: 28, fontWeight: '800', color: COLORS.textPrimary, flex: 1 },
+  titleInput: { fontSize: 26, fontWeight: '800', color: '#FFFFFF', flex: 1 },
   amountBox: { flexDirection: 'row', alignItems: 'center' },
-  currency: { fontSize: 24, color: COLORS.textSecondary, fontWeight: '600', marginRight: 4 },
-  amountInput: { fontSize: 32, color: COLORS.textPrimary, fontWeight: '700', textAlign: 'right' },
+  currency: { fontSize: 22, color: '#888', fontWeight: '600', marginRight: 4 },
+  amountInput: { fontSize: 30, color: '#FFFFFF', fontWeight: '700', textAlign: 'right', minWidth: 80 },
   dateControl: {
-    flexDirection: 'row', backgroundColor: COLORS.card, marginHorizontal: 20,
-    borderRadius: 16, padding: 16, marginBottom: 24, justifyContent: 'space-between',
+    flexDirection: 'row', marginHorizontal: 20,
+    borderRadius: 16, padding: 16, marginBottom: 24, marginTop: 16,
+    justifyContent: 'space-between', borderWidth: 1, borderColor: '#1C1C1E', backgroundColor: '#0A0A0A',
   },
   dateField: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  timeField: { paddingLeft: 12, borderLeftWidth: 1, borderLeftColor: COLORS.cardBorder },
-  dateValue: { fontSize: 18, fontWeight: '700', color: COLORS.textPrimary },
+  timeField: { paddingLeft: 16, borderLeftWidth: 1, borderLeftColor: '#1C1C1E' },
+  dateValue: { fontSize: 16, fontWeight: '700', color: '#FFFFFF' },
   categoryWrap: {
-    backgroundColor: COLORS.card, borderTopLeftRadius: 28, borderTopRightRadius: 28,
-    padding: 24, paddingBottom: 32,
+    paddingTop: 4, paddingBottom: 12,
   },
-  sectionTitle: { fontSize: 22, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 24 },
-  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', justifyContent: 'space-between', gap: 12 },
-  catItem: { width: (width - 48 - 36) / 4, alignItems: 'center', marginBottom: 16 },
-  catItemActive: { opacity: 0.8 },
+  sectionTitle: { fontSize: 14, fontWeight: '700', color: '#8E8E93', marginBottom: 16, paddingHorizontal: 20, letterSpacing: 1, textTransform: 'uppercase' },
+  categoryGrid: { flexDirection: 'row', flexWrap: 'wrap', paddingHorizontal: 16, gap: 8 },
+  catItem: { width: (width - 32 - 32) / 4, alignItems: 'center', marginBottom: 12 },
   catIconBox: {
-    width: 64, height: 64, borderRadius: 18, alignItems: 'center',
-    justifyContent: 'center', marginBottom: 8,
+    width: 60, height: 60, borderRadius: 18, alignItems: 'center',
+    justifyContent: 'center', marginBottom: 6,
+    backgroundColor: '#0A0A0A', borderWidth: 1, borderColor: '#222',
   },
-  catLabel: { fontSize: 12, color: COLORS.textSecondary, textAlign: 'center' },
+  catIconBoxActive: {
+    backgroundColor: '#FFFFFF',
+    borderColor: '#FFFFFF',
+  },
+  catLabel: { fontSize: 11, color: '#8E8E93', textAlign: 'center' },
+  catLabelActive: { color: '#FFFFFF', fontWeight: '700' },
   noteInput: {
-    backgroundColor: COLORS.card, marginVertical: 12, marginHorizontal: 20,
-    borderRadius: 16, padding: 18, fontSize: 16, color: COLORS.textPrimary, minHeight: 100,
+    backgroundColor: '#0A0A0A', marginVertical: 8, marginHorizontal: 20,
+    borderRadius: 16, padding: 18, fontSize: 16, color: '#FFFFFF', minHeight: 90,
+    borderWidth: 1, borderColor: '#1C1C1E',
   },
   saveBtn: {
-    backgroundColor: COLORS.primary, marginHorizontal: 20, marginTop: 12,
+    marginHorizontal: 20, marginTop: 16,
     borderRadius: 16, paddingVertical: 18, alignItems: 'center',
   },
-  saveBtnText: { color: '#fff', fontSize: 18, fontWeight: '800' },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.8)', justifyContent: 'flex-end' },
-  modalCard: { backgroundColor: COLORS.card, padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24 },
-  modalTitle: { fontSize: 20, fontWeight: '700', color: COLORS.textPrimary, marginBottom: 16 },
-  modalInput: { backgroundColor: COLORS.cardElevated, borderRadius: 12, height: 50, paddingHorizontal: 16, color: COLORS.textPrimary, fontSize: 16 },
+  saveBtnText: { fontSize: 17, fontWeight: '800' },
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)', justifyContent: 'flex-end' },
+  modalCard: { backgroundColor: '#0A0A0A', padding: 24, borderTopLeftRadius: 24, borderTopRightRadius: 24, borderTopWidth: 1, borderColor: '#222' },
+  modalTitle: { fontSize: 20, fontWeight: '700', color: '#FFFFFF', marginBottom: 16 },
+  modalInput: { backgroundColor: '#111', borderRadius: 12, height: 50, paddingHorizontal: 16, color: '#FFFFFF', fontSize: 16, borderWidth: 1, borderColor: '#333' },
   modalBtn: { flex: 1, height: 50, borderRadius: 12, alignItems: 'center', justifyContent: 'center' },
 });

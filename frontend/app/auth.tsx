@@ -5,13 +5,35 @@ import {
   KeyboardAvoidingView, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { createUserWithEmailAndPassword, signInWithEmailAndPassword, sendEmailVerification } from 'firebase/auth';
+import { 
+  createUserWithEmailAndPassword, 
+  signInWithEmailAndPassword, 
+  sendEmailVerification,
+  GoogleAuthProvider,
+  signInWithCredential
+} from 'firebase/auth';
 import { auth } from '@/config/firebaseConfig';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import { COLORS } from '@/constants/theme';
 
 const { width } = Dimensions.get('window');
+
+// Dynamically import GoogleSignin to avoid crashing in Expo Go
+let GoogleSignin: any = null;
+let statusCodes: any = null;
+try {
+  const gs = require('@react-native-google-signin/google-signin');
+  GoogleSignin = gs.GoogleSignin;
+  statusCodes = gs.statusCodes;
+  
+  // Configure Google Sign-In
+  GoogleSignin.configure({
+    webClientId: process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID || '', // Needs to be configured in .env
+  });
+} catch (e) {
+  console.warn('Google Sign-In requires a custom dev client. It will not work in standard Expo Go.');
+}
 
 export default function AuthScreen() {
   const [isLogin, setIsLogin] = useState(true);
@@ -30,7 +52,7 @@ export default function AuthScreen() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    let interval: NodeJS.Timeout;
+    let interval: ReturnType<typeof setInterval>;
     if (user && !user.emailVerified) {
       interval = setInterval(async () => {
         await user.reload();
@@ -66,6 +88,53 @@ export default function AuthScreen() {
     } finally { setLoading(false); }
   };
 
+  const handleGoogleSignIn = async () => {
+    if (!GoogleSignin) {
+      return Alert.alert(
+        'Development Build Required',
+        'Google Sign-In requires native modules that are not available in Expo Go. Please build a custom dev client (e.g., npx expo run:ios).'
+      );
+    }
+    
+    if (!process.env.EXPO_PUBLIC_GOOGLE_WEB_CLIENT_ID) {
+       return Alert.alert(
+        'Configuration Missing', 
+        'Google Sign-In is missing the Web Client ID configuration. Please add it to your environment variables.'
+       );
+    }
+    
+    setLoading(true);
+    try {
+      await GoogleSignin.hasPlayServices();
+      const response = await GoogleSignin.signIn();
+      const idToken = response.data?.idToken;
+      
+      if (!idToken) {
+        throw new Error('No ID token found');
+      }
+
+      // Create a Google credential with the token
+      const googleCredential = GoogleAuthProvider.credential(idToken);
+
+      // Sign-in the user with the credential
+      await signInWithCredential(auth, googleCredential);
+      
+      router.replace('/(tabs)');
+    } catch (error: any) {
+      if (error.code === statusCodes.SIGN_IN_CANCELLED) {
+        // User cancelled the login flow
+      } else if (error.code === statusCodes.IN_PROGRESS) {
+        // Operation in progress already
+      } else if (error.code === statusCodes.PLAY_SERVICES_NOT_AVAILABLE) {
+        Alert.alert('Error', 'Play services not available or outdated');
+      } else {
+        Alert.alert('Google Sign-In Error', error.message);
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const checkVerification = async () => {
     setLoading(true);
     try {
@@ -80,14 +149,14 @@ export default function AuthScreen() {
     return (
       <SafeAreaView style={styles.root}>
         <View style={styles.verifyBox}>
-          <View style={styles.iconCircle}>
-            <Ionicons name="mail-open-outline" size={36} color={COLORS.primary} />
+          <View style={[styles.iconCircle, { backgroundColor: '#111' }]}>
+            <Ionicons name="mail-open-outline" size={36} color="#fff" />
           </View>
           <Text style={styles.verifyTitle}>Check your email</Text>
           <Text style={styles.verifySubtitle}>
-            We sent a link to{'\n'}<Text style={{ color: COLORS.textPrimary }}>{user.email}</Text>
+            We sent a link to{'\n'}<Text style={{ color: '#fff' }}>{user.email}</Text>
           </Text>
-          {loading ? <ActivityIndicator color={COLORS.primary} style={{ marginTop: 24 }} /> : (
+          {loading ? <ActivityIndicator color="#fff" style={{ marginTop: 24 }} /> : (
             <TouchableOpacity style={styles.primaryButton} onPress={checkVerification}>
               <Text style={styles.primaryButtonText}>I've verified my email</Text>
             </TouchableOpacity>
@@ -109,36 +178,33 @@ export default function AuthScreen() {
 
           {/* Logo / branding */}
           <View style={styles.brandBox}>
-            <View style={styles.logoCircle}>
-              <Text style={{ fontSize: 28 }}>💸</Text>
-            </View>
             <Text style={styles.brandName}>ExpenseTracker</Text>
             <Text style={styles.tagline}>{isLogin ? 'Sign in to continue' : 'Create your account'}</Text>
           </View>
 
-          {/* Form card */}
+          {/* Form card - transparent to blend with matte black */}
           <View style={styles.card}>
             {!isLogin && (
               <View style={styles.nameRow}>
                 <TextInput style={[styles.input, { flex: 1 }]} placeholder="First Name"
-                  placeholderTextColor={COLORS.textTertiary} value={firstName} onChangeText={setFirstName} />
+                  placeholderTextColor={COLORS.textSecondary} value={firstName} onChangeText={setFirstName} />
                 <TextInput style={[styles.input, { flex: 1 }]} placeholder="Last Name"
-                  placeholderTextColor={COLORS.textTertiary} value={lastName} onChangeText={setLastName} />
+                  placeholderTextColor={COLORS.textSecondary} value={lastName} onChangeText={setLastName} />
               </View>
             )}
             <TextInput style={styles.input} placeholder="Email address"
-              placeholderTextColor={COLORS.textTertiary} value={email} onChangeText={setEmail}
+              placeholderTextColor={COLORS.textSecondary} value={email} onChangeText={setEmail}
               autoCapitalize="none" keyboardType="email-address" />
             <TextInput style={styles.input} placeholder="Password"
-              placeholderTextColor={COLORS.textTertiary} value={password} onChangeText={setPassword}
+              placeholderTextColor={COLORS.textSecondary} value={password} onChangeText={setPassword}
               secureTextEntry />
             {!isLogin && (
               <TextInput style={styles.input} placeholder="Confirm Password"
-                placeholderTextColor={COLORS.textTertiary} value={confirmPassword} onChangeText={setConfirmPassword}
+                placeholderTextColor={COLORS.textSecondary} value={confirmPassword} onChangeText={setConfirmPassword}
                 secureTextEntry />
             )}
 
-            {loading ? <ActivityIndicator color={COLORS.primary} style={{ marginVertical: 20 }} /> : (
+            {loading ? <ActivityIndicator color="#fff" style={{ marginVertical: 20 }} /> : (
               <TouchableOpacity style={styles.primaryButton} onPress={handleAuth}>
                 <Text style={styles.primaryButtonText}>{isLogin ? 'Sign In' : 'Create Account'}</Text>
               </TouchableOpacity>
@@ -151,7 +217,7 @@ export default function AuthScreen() {
             </View>
 
             <TouchableOpacity style={styles.googleBtn}
-              onPress={() => Alert.alert('Coming Soon', 'Google Sign-In is being configured.')}>
+              onPress={handleGoogleSignIn}>
               <Ionicons name="logo-google" size={18} color="#111" style={{ marginRight: 8 }} />
               <Text style={styles.googleText}>Continue with Google</Text>
             </TouchableOpacity>
@@ -170,45 +236,48 @@ export default function AuthScreen() {
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, backgroundColor: COLORS.bg },
-  scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 40 },
-  brandBox: { alignItems: 'center', paddingTop: 48, paddingBottom: 36 },
-  logoCircle: {
-    width: 72, height: 72, borderRadius: 22, backgroundColor: COLORS.card,
-    alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-  },
-  brandName: { fontSize: 24, fontWeight: '800', color: COLORS.textPrimary, letterSpacing: -0.5 },
-  tagline: { fontSize: 15, color: COLORS.textSecondary, marginTop: 6 },
-  card: { backgroundColor: COLORS.card, borderRadius: 20, padding: 20, gap: 12 },
-  nameRow: { flexDirection: 'row', gap: 10 },
+  root: { flex: 1, backgroundColor: '#000000' }, // Matte black background
+  scrollContent: { flexGrow: 1, paddingHorizontal: 24, paddingBottom: 40, justifyContent: 'center' },
+  brandBox: { alignItems: 'center', paddingTop: 48, paddingBottom: 48 },
+  brandName: { fontSize: 36, fontWeight: '800', color: '#FFFFFF', letterSpacing: -1 }, // Large crisp font
+  tagline: { fontSize: 16, color: COLORS.textSecondary, marginTop: 10 },
+  card: { backgroundColor: 'transparent', padding: 0, gap: 16 }, // Seamless card
+  nameRow: { flexDirection: 'row', gap: 16 },
   input: {
-    height: 54, backgroundColor: COLORS.cardElevated, borderRadius: 14,
-    paddingHorizontal: 16, fontSize: 17, color: COLORS.textPrimary,
+    height: 50, 
+    borderBottomWidth: 1,
+    borderBottomColor: '#333333', // Subtle separator
+    paddingHorizontal: 0, 
+    fontSize: 18, 
+    color: '#FFFFFF', // High contrast white letters
+    backgroundColor: 'transparent', // No box
   },
   primaryButton: {
-    backgroundColor: COLORS.primary, paddingVertical: 17, borderRadius: 14,
-    alignItems: 'center', marginTop: 4,
-    shadowColor: COLORS.primary, shadowOpacity: 0.3, shadowRadius: 10, elevation: 6,
+    backgroundColor: '#FFFFFF', // Contrast button
+    paddingVertical: 16, borderRadius: 12,
+    alignItems: 'center', marginTop: 20,
   },
-  primaryButtonText: { color: '#fff', fontSize: 17, fontWeight: '700' },
-  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  dividerLine: { flex: 1, height: 1, backgroundColor: COLORS.cardBorder },
-  dividerText: { color: COLORS.textTertiary, fontSize: 13 },
+  primaryButtonText: { color: '#000000', fontSize: 17, fontWeight: '700' },
+  dividerRow: { flexDirection: 'row', alignItems: 'center', gap: 16, marginVertical: 10 },
+  dividerLine: { flex: 1, height: 1, backgroundColor: '#222222' },
+  dividerText: { color: COLORS.textSecondary, fontSize: 14 },
   googleBtn: {
-    backgroundColor: '#fff', paddingVertical: 14, borderRadius: 14,
+    backgroundColor: '#1C1C1E', // Darker button on black background
+    paddingVertical: 16, borderRadius: 12,
     flexDirection: 'row', alignItems: 'center', justifyContent: 'center',
+    borderWidth: 1, borderColor: '#333333',
   },
-  googleText: { color: '#111', fontSize: 15, fontWeight: '700' },
-  switchRow: { alignItems: 'center', marginTop: 28 },
+  googleText: { color: '#FFFFFF', fontSize: 16, fontWeight: '600' },
+  switchRow: { alignItems: 'center', marginTop: 32 },
   switchText: { fontSize: 15, color: COLORS.textSecondary },
-  link: { color: COLORS.primary, fontWeight: '700' },
+  link: { color: '#FFFFFF', fontWeight: '700' },
   // Verification
   verifyBox: { flex: 1, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 32 },
   iconCircle: {
-    width: 80, height: 80, borderRadius: 40, backgroundColor: COLORS.card,
+    width: 80, height: 80, borderRadius: 40,
     alignItems: 'center', justifyContent: 'center', marginBottom: 24,
   },
-  verifyTitle: { fontSize: 26, fontWeight: '800', color: COLORS.textPrimary, marginBottom: 12 },
+  verifyTitle: { fontSize: 26, fontWeight: '800', color: '#FFFFFF', marginBottom: 12 },
   verifySubtitle: {
     fontSize: 15, color: COLORS.textSecondary, textAlign: 'center', lineHeight: 22, marginBottom: 32,
   },
